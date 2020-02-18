@@ -250,6 +250,25 @@ class env(base_env_wrapper.base_env):
                 alive_bonus
         self.reward_tf = reward_tf
 
+        @tf.function
+        def reward_tf2(start_state,action,end_state):
+            # the speed reward
+            reward_velocity = start_state[...,velocity_ob_pos]
+
+            # the height reward
+            agent_height = start_state[...,height_ob_pos]
+
+            if self._use_pets_reward:
+                reward_height = (end_state[...,height_ob_pos] - agent_height) / self._env.env.dt
+            else:
+                reward_height = -height_coeff * (agent_height - target_height) ** 2
+
+            # the control reward
+            reward_control = - ctrl_coeff * tf.reduce_sum(tf.square(action),axis=-1)
+
+            return reward_velocity + reward_height + reward_control + alive_bonus
+        self.reward_tf2 = reward_tf2
+
         def reward_derivative(data_dict, target):
             num_data = len(data_dict['start_state'])
             if target == 'state':
