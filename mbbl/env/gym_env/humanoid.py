@@ -12,6 +12,7 @@
 #       1. do we need height as second order reward?
 # -----------------------------------------------------------------------------
 import numpy as np
+import tensorflow as tf
 
 from mbbl.config import init_path
 from mbbl.env import base_env_wrapper
@@ -207,6 +208,32 @@ class env(base_env_wrapper.base_env):
             return lin_vel_reward + alive_bonus + \
                 quad_ctrl_reward + quad_impact_reward
         self.reward = reward
+
+        @tf.function
+        def reward_tf2(start_state,action,end_state):
+            # velocity reward
+            lin_vel_reward = 0.25 / 0.015 * start_state[...,22]
+
+            # quad_ctrl_cost
+            quad_ctrl_reward = -0.1 * tf.reduce_sum(action**2,axis=-1)
+
+            # quad_impact_cost
+            if self._env_name == 'gym_humanoid':
+                cfrc_ext = start_state[...,-84:]
+                quad_impact_reward = tf.math.maximum(tf.reduce_sum(-5e-7 * cfrc_ext**2,axis=-1), -10)
+            else:
+                quad_impact_reward = 0.0
+
+            # alive bonus
+            height = start_state[...,0]
+            done = tf.cast(tf.logical_or(
+                    tf.math.greater(height, 2.0),
+                    tf.math.less(height, 1.0)
+                ), tf.float32)
+            alive_bonus = 5 * (1. - done)
+
+            return lin_vel_reward + alive_bonus + quad_ctrl_reward + quad_impact_reward
+        self.reward_tf2 = reward_tf2
 
         def reward_derivative(data_dict, target):
 
