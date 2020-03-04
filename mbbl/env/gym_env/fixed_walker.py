@@ -28,6 +28,11 @@ class env(base_env_wrapper.base_env):
               'gym_fant2', 'gym_fant5', 'gym_fant10', 'gym_fant20', 'gym_fant30']
 
     def __init__(self, env_name, rand_seed, misc_info):
+        if 'no_termination' in misc_info and misc_info['no_termination']:
+            self._no_termination = True
+        else:
+            self._no_termination = False
+
         super(env, self).__init__(env_name, rand_seed, misc_info)
         self._base_path = init_path.get_abs_base_dir()
 
@@ -46,11 +51,6 @@ class env(base_env_wrapper.base_env):
                 env_util.box(self._env_info['ob_size'], -1, 1)
         else:
             self._reset_return_obs_only = False
-
-        if 'no_termination' in misc_info and misc_info['no_termination']:
-            self._no_termination = True
-        else:
-            self._no_termination = False
 
     def step(self, action):
         # get the observation
@@ -339,28 +339,6 @@ class env(base_env_wrapper.base_env):
             return reward_velocity + reward_height + reward_control + alive_reward
         self.reward = reward
 
-        def reward_tf(data_dict):
-             # the speed reward
-            reward_velocity = data_dict['start_state'][velocity_ob_pos] if data_dict['start_state'] is not None else tf.constant(0, dtype=tf.float32)
-
-            # the height reward
-            agent_height = data_dict['start_state'][height_ob_pos] if data_dict['start_state'] is not None else tf.constant(0, dtype=tf.float32)
-
-            if self._use_pets_reward:
-                reward_height = tf.convert_to_tensor(
-                    (data_dict['end_state'][height_ob_pos] - agent_height) /
-                    self._env.env.dt, dtype=tf.float32)
-
-            else:
-                reward_height = tf.convert_to_tensor(
-                    -height_coeff * (agent_height - target_height) ** 2, dtype=tf.float32)
-
-            # the control reward
-            reward_control = - ctrl_coeff * tf.reduce_sum(tf.square(data_dict['action']))
-
-            return reward_velocity + reward_height + reward_control
-        self.reward_tf = reward_tf
-
         def reward_derivative(data_dict, target):
             num_data = len(data_dict['start_state'])
             if target == 'state':
@@ -423,6 +401,58 @@ class env(base_env_wrapper.base_env):
             return derivative_data
         self.reward_derivative = reward_derivative
 
+        if self._no_termination:
+            @tf.function
+            def done_tf2(ns):
+                return tf.zeros(tf.shape(ns)[:-1],tf.bool)
+        else:
+            if self._env_name == 'gym_fhopper':
+                @tf.function
+                def done_tf2(ns):
+                    height, ang = ns[...,0], ns[...,1]
+                    done = tf.logical_or(height <= 0.7,abs(ang) >= 0.2)
+                    return done
+            elif self._env_name == 'gym_fwalker2d':
+                @tf.function
+                def done_tf2(ns):
+                    height, ang = ns[...,0], ns[...,1]
+                    done = tf.logical_or(
+                        tf.logical_or(height >= 2.0,height <= 0.8), abs(ang) >= 1.0)
+                    return done
+            elif self._env_name == 'gym_fant':
+                @tf.function
+                def done_tf2(ns):
+                    height = ns[...,0]
+                    done = tf.logical_or(height > 1.0,height < 0.2)
+                    return done
+            elif self._env_name in ['gym_fant2', 'gym_fant5', 'gym_fant10', 'gym_fant20', 'gym_fant30']:
+                @tf.function
+                def done_tf2(ns):
+                    height = ns[...,0]
+                    done = tf.logical_or(height > 1.0,height < 0.2)
+                    return done
+        self.done_tf2 = done_tf2
+
+        @tf.function
+        def reward_tf2(start_state,action,end_state):
+            # the speed reward
+            reward_velocity = start_state[...,velocity_ob_pos]
+
+            # the height reward
+            agent_height = start_state[...,height_ob_pos]
+
+            if self._use_pets_reward:
+                reward_height = (end_state[...,height_ob_pos] - agent_height) / self._env.env.dt
+            else:
+                reward_height = -height_coeff * (agent_height - target_height) ** 2
+
+            # the control reward
+            reward_control = - ctrl_coeff * tf.reduce_sum(tf.square(action),axis=-1)
+
+            alive_bonus = 1.0 - tf.cast(self.done_tf2(end_state),tf.float32)
+
+            return reward_velocity + reward_height + reward_control + alive_bonus
+        self.reward_tf2 = reward_tf2
 
 if __name__ == '__main__':
 

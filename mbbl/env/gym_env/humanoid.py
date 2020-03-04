@@ -210,6 +210,16 @@ class env(base_env_wrapper.base_env):
         self.reward = reward
 
         @tf.function
+        def done_tf2(state):
+            height = state[...,0]
+            done = tf.logical_or(
+                tf.math.greater(height, 2.0),
+                tf.math.less(height, 1.0))
+            return done
+
+        self.done_tf2 = done_tf2
+
+        @tf.function
         def reward_tf2(start_state,action,end_state):
             # velocity reward
             lin_vel_reward = 0.25 / 0.015 * start_state[...,22]
@@ -225,12 +235,7 @@ class env(base_env_wrapper.base_env):
                 quad_impact_reward = 0.0
 
             # alive bonus
-            height = start_state[...,0]
-            done = tf.cast(tf.logical_or(
-                    tf.math.greater(height, 2.0),
-                    tf.math.less(height, 1.0)
-                ), tf.float32)
-            alive_bonus = 5 * (1. - done)
+            alive_bonus = 5 * (1. - tf.cast(self.done_tf2(end_state),tf.float32))
 
             return lin_vel_reward + alive_bonus + quad_ctrl_reward + quad_impact_reward
         self.reward_tf2 = reward_tf2
